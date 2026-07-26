@@ -14,13 +14,14 @@ const (
 
 // Event is the canonical record for a bookable event.
 type Event struct {
-	ID             int64       `db:"id"              json:"id"`
-	Name           string      `db:"name"            json:"name"`
-	Venue          string      `db:"venue"           json:"venue"`
-	TotalSeats     int         `db:"total_seats"     json:"total_seats"`
-	AvailableSeats int         `db:"available_seats" json:"available_seats"`
-	SaleStartsAt   time.Time   `db:"sale_starts_at"  json:"sale_starts_at"`
-	Status         EventStatus `db:"status"          json:"status"`
-	CreatedAt      time.Time   `db:"created_at"      json:"created_at"`
-	UpdatedAt      time.Time   `db:"updated_at"      json:"updated_at"`
+	ID             int64       `gorm:"primaryKey" json:"id"`
+	Name           string      `gorm:"not null" json:"name"`
+	Venue          string      `gorm:"not null" json:"venue"`
+	TotalSeats     int         `gorm:"not null" json:"total_seats"`
+	AvailableSeats int         `gorm:"not null" json:"available_seats"`
+	SaleStartsAt   time.Time   `gorm:"not null" json:"sale_starts_at"`
+	Status         EventStatus `gorm:"type:varchar(16);not null;default:'UPCOMING';index" json:"status"`
+	Seats          []Seat      `gorm:"foreignKey:EventID" json:"seats,omitempty"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }

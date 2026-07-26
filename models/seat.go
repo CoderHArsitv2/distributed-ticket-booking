@@ -14,14 +14,14 @@ const (
 
 // Seat is a single inventory row. The Version column powers optimistic locking.
 type Seat struct {
-	ID            int64      `db:"id"            json:"id"`
-	EventID       int64      `db:"event_id"      json:"event_id"`
-	SeatNumber    string     `db:"seat_number"   json:"seat_number"`
-	Section       string     `db:"section"       json:"section"`
-	Price         int64      `db:"price"         json:"price"` // minor units (e.g. cents)
-	Status        SeatStatus `db:"status"        json:"status"`
-	ReservedUntil *time.Time `db:"reserved_until" json:"reserved_until,omitempty"`
-	Version       int64      `db:"version"       json:"version"`
-	CreatedAt     time.Time  `db:"created_at"    json:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"    json:"updated_at"`
+	ID            int64      `gorm:"primaryKey" json:"id"`
+	EventID       int64      `gorm:"not null;uniqueIndex:uq_seat_event_number,priority:1;index:idx_seat_event" json:"event_id"`
+	SeatNumber    string     `gorm:"not null;uniqueIndex:uq_seat_event_number,priority:2" json:"seat_number"`
+	Section       string     `gorm:"not null" json:"section"`
+	Price         int64      `gorm:"not null" json:"price"` // minor units (e.g. cents)
+	Status        SeatStatus `gorm:"type:varchar(16);not null;default:'AVAILABLE';index:idx_seat_status_expiry,priority:1" json:"status"`
+	ReservedUntil *time.Time `gorm:"index:idx_seat_status_expiry,priority:2" json:"reserved_until,omitempty"`
+	Version       int64      `gorm:"not null;default:0" json:"version"` // optimistic locking
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }

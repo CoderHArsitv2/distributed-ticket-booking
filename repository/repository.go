@@ -1,6 +1,5 @@
 // Package repository defines the data-access contracts (repository pattern).
-// Concrete implementations (Postgres/MySQL) live alongside these interfaces and
-// are wired up in Phase 3.
+// GORM-backed implementations live in gorm_repository.go.
 package repository
 
 import (
