@@ -4,17 +4,20 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"distributed-ticket-booking/locking"
+	"distributed-ticket-booking/models"
 	"distributed-ticket-booking/repository"
 )
 
 // ReservationService orchestrates the seat-hold -> reserve -> book flow using
 // the configured locking strategy.
 type ReservationService struct {
-	locker locking.SeatLocker
-	seats  repository.SeatRepository
-	holds  repository.ReservationRepository
+	locker  locking.SeatLocker
+	seats   repository.SeatRepository
+	holds   repository.ReservationRepository
+	holdTTL time.Duration
 }
 
 // NewReservationService wires the reservation engine.
@@ -22,22 +25,32 @@ func NewReservationService(
 	locker locking.SeatLocker,
 	seats repository.SeatRepository,
 	holds repository.ReservationRepository,
+	holdTTL time.Duration,
 ) *ReservationService {
-	return &ReservationService{locker: locker, seats: seats, holds: holds}
+	return &ReservationService{locker: locker, seats: seats, holds: holds, holdTTL: holdTTL}
 }
 
-// HoldSeat acquires a lock via the configured strategy and creates a temporary
-// RESERVED hold for the user.
-//
-// TODO(phase-4/5): acquire the lock, persist the hold with an expiry, and
-// return the reservation so the caller can proceed to checkout.
-func (s *ReservationService) HoldSeat(ctx context.Context, eventID, seatID, userID int64) error {
-	_, err := s.locker.Acquire(ctx, seatID, userID)
-	if err != nil {
-		return err
+// HoldSeat acquires a lock via the configured strategy, which flips the seat to
+// RESERVED, then persists a Reservation row tracking the hold expiry. On success
+// it returns the created reservation.
+func (s *ReservationService) HoldSeat(ctx context.Context, eventID, seatID, userID int64) (*models.Reservation, error) {
+	if _, err := s.locker.Acquire(ctx, seatID, userID); err != nil {
+		return nil, err
 	}
-	// TODO: create reservation row with expires_at = now + HoldTTL.
-	return nil
+
+	res := &models.Reservation{
+		SeatID:    seatID,
+		EventID:   eventID,
+		UserID:    userID,
+		Status:    models.ReservationHeld,
+		ExpiresAt: time.Now().Add(s.holdTTL),
+	}
+	if err := s.holds.Create(ctx, res); err != nil {
+		// Best-effort rollback of the seat hold so we don't strand it.
+		_ = s.locker.Release(ctx, seatID, "")
+		return nil, err
+	}
+	return res, nil
 }
 
 // Strategy reports which locking strategy is active.

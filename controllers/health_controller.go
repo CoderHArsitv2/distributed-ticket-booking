@@ -1,6 +1,10 @@
 package controllers
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
 
 // HealthController exposes liveness/readiness endpoints.
 type HealthController struct{}
@@ -9,6 +13,6 @@ type HealthController struct{}
 func NewHealthController() *HealthController { return &HealthController{} }
 
 // Healthz reports process liveness.
-func (c *HealthController) Healthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+func (h *HealthController) Healthz(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

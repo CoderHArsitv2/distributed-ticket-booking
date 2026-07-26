@@ -1,35 +1,30 @@
-// Package router assembles the HTTP routes and middleware. It uses the stdlib
-// net/http mux for now; swap for chi/gin in Phase 6 if richer routing is needed.
+// Package router assembles the Gin engine: routes plus middleware.
 package router
 
 import (
-	"log/slog"
-	"net/http"
+	"github.com/gin-gonic/gin"
 
 	"distributed-ticket-booking/controllers"
-	"distributed-ticket-booking/middleware"
 )
 
 // Deps are the controllers the router wires into routes.
 type Deps struct {
 	Health      *controllers.HealthController
 	Reservation *controllers.ReservationController
-	Logger      *slog.Logger
 }
 
-// New builds the fully-wired HTTP handler.
-func New(d Deps) http.Handler {
-	mux := http.NewServeMux()
+// New builds the fully-wired Gin engine (with Logger + Recovery middleware).
+func New(d Deps) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
 
-	mux.HandleFunc("GET /healthz", d.Health.Healthz)
+	r.GET("/healthz", d.Health.Healthz)
 
-	// API v1
-	mux.HandleFunc("POST /api/v1/reservations", d.Reservation.Hold)
-	// TODO(phase-6): GET /api/v1/events, GET /api/v1/events/{id}/seats,
-	// POST /api/v1/bookings, etc.
+	v1 := r.Group("/api/v1")
+	{
+		v1.POST("/reservations", d.Reservation.Hold)
+		// TODO(phase-6): GET /events, GET /events/:id/seats, POST /bookings, etc.
+	}
 
-	return middleware.Chain(mux,
-		middleware.Recover(d.Logger),
-		middleware.Logger(d.Logger),
-	)
+	return r
 }

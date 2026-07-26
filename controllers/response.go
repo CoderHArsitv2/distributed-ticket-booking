@@ -3,19 +3,9 @@
 // business logic themselves.
 package controllers
 
-import (
-	"encoding/json"
-	"net/http"
-)
+import "github.com/gin-gonic/gin"
 
-// writeJSON serializes v as JSON with the given status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-// writeError writes a standard JSON error envelope.
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+// respondError writes a standard JSON error envelope with the given status.
+func respondError(c *gin.Context, status int, msg string) {
+	c.JSON(status, gin.H{"error": msg})
 }

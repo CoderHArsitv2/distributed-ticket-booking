@@ -14,11 +14,11 @@ const (
 
 // Reservation is a temporary hold on a seat, valid until ExpiresAt.
 type Reservation struct {
-	ID        int64             `db:"id"         json:"id"`
-	SeatID    int64             `db:"seat_id"    json:"seat_id"`
-	EventID   int64             `db:"event_id"   json:"event_id"`
-	UserID    int64             `db:"user_id"    json:"user_id"`
-	Status    ReservationStatus `db:"status"     json:"status"`
-	ExpiresAt time.Time         `db:"expires_at" json:"expires_at"`
-	CreatedAt time.Time         `db:"created_at" json:"created_at"`
+	ID        int64             `gorm:"primaryKey" json:"id"`
+	SeatID    int64             `gorm:"not null;index" json:"seat_id"`
+	EventID   int64             `gorm:"not null;index" json:"event_id"`
+	UserID    int64             `gorm:"not null" json:"user_id"`
+	Status    ReservationStatus `gorm:"type:varchar(16);not null;default:'HELD';index:idx_res_status_expiry,priority:1" json:"status"`
+	ExpiresAt time.Time         `gorm:"not null;index:idx_res_status_expiry,priority:2" json:"expires_at"`
+	CreatedAt time.Time         `json:"created_at"`
 }
