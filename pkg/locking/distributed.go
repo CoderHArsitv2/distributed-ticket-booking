@@ -22,29 +22,38 @@ else
     return 0
 end`
 
-// DistributedLocker uses Redis SET key token NX PX <ttl> to acquire, and the
+// distributedLocker uses Redis SET key token NX PX <ttl> to acquire, and the
 // atomic Lua script above to release. Works across multiple service instances;
 // best for flash sales. For multi-node Redis, swap in Redsync (Redlock).
 //
 // Acquiring the Redis lock grants the right to flip the seat to RESERVED in the
 // database, keeping the durable seat state consistent across the three
 // strategies.
-type DistributedLocker struct {
+type distributedLocker struct {
 	rdb *redis.Client
 	db  *gorm.DB
 	ttl time.Duration
 }
 
-// NewDistributedLocker constructs the Redis distributed-lock strategy.
-func NewDistributedLocker(rdb *redis.Client, db *gorm.DB, ttl time.Duration) *DistributedLocker {
-	return &DistributedLocker{rdb: rdb, db: db, ttl: ttl}
+// newDistributedLocker dials Redis from redisURL and constructs the
+// distributed-lock strategy. The client it opens is owned by the locker and
+// shut down by Close.
+func newDistributedLocker(redisURL string, db *gorm.DB, ttl time.Duration) (*distributedLocker, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	return &distributedLocker{rdb: redis.NewClient(opts), db: db, ttl: ttl}, nil
 }
 
-func (l *DistributedLocker) Name() string { return "distributed" }
+func (l *distributedLocker) Name() string { return string(StrategyDistributed) }
+
+// Close shuts down the Redis client this locker opened.
+func (l *distributedLocker) Close() error { return l.rdb.Close() }
 
 func lockKey(seatID int64) string { return fmt.Sprintf("seatlock:%d", seatID) }
 
-func (l *DistributedLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
+func (l *distributedLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
 	token := uuid.NewString()
 
 	ok, err := l.rdb.SetNX(ctx, lockKey(seatID), token, l.ttl).Result()
@@ -75,7 +84,7 @@ func (l *DistributedLocker) Acquire(ctx context.Context, seatID, userID int64) (
 	return token, nil
 }
 
-func (l *DistributedLocker) Release(ctx context.Context, seatID int64, token string) error {
+func (l *distributedLocker) Release(ctx context.Context, seatID int64, token string) error {
 	// Atomically drop the lock only if we still own it.
 	if err := l.rdb.Eval(ctx, releaseScript, []string{lockKey(seatID)}, token).Err(); err != nil && err != redis.Nil {
 		return err

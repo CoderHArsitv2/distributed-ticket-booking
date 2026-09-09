@@ -1,30 +1,29 @@
 // Package service holds business logic: the booking flow orchestration on top
-// of the repository and locking layers.
+// of the model stores and locking layers.
 package service
 
 import (
 	"context"
 	"time"
 
-	"distributed-ticket-booking/locking"
 	"distributed-ticket-booking/models"
-	"distributed-ticket-booking/repository"
+	"distributed-ticket-booking/pkg/locking"
 )
 
 // ReservationService orchestrates the seat-hold -> reserve -> book flow using
 // the configured locking strategy.
 type ReservationService struct {
 	locker  locking.SeatLocker
-	seats   repository.SeatRepository
-	holds   repository.ReservationRepository
+	seats   models.SeatStore
+	holds   models.ReservationStore
 	holdTTL time.Duration
 }
 
 // NewReservationService wires the reservation engine.
 func NewReservationService(
 	locker locking.SeatLocker,
-	seats repository.SeatRepository,
-	holds repository.ReservationRepository,
+	seats models.SeatStore,
+	holds models.ReservationStore,
 	holdTTL time.Duration,
 ) *ReservationService {
 	return &ReservationService{locker: locker, seats: seats, holds: holds, holdTTL: holdTTL}

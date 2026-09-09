@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // BookingStatus tracks the lifecycle of a finalized order.
 type BookingStatus string
@@ -32,4 +38,39 @@ type BookingSeat struct {
 	BookingID     int64 `gorm:"not null;uniqueIndex:uq_booking_seat,priority:1" json:"booking_id"`
 	SeatID        int64 `gorm:"not null;uniqueIndex:uq_booking_seat,priority:2" json:"seat_id"`
 	PriceSnapshot int64 `gorm:"not null" json:"price_snapshot"` // minor units
+}
+
+// bookingStore is the GORM-backed BookingStore.
+type bookingStore struct{ db *gorm.DB }
+
+// NewBookingStore returns a GORM-backed BookingStore.
+func NewBookingStore(db *gorm.DB) BookingStore { return &bookingStore{db: db} }
+
+func (r *bookingStore) Create(ctx context.Context, b *Booking, seats []BookingSeat) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(b).Error; err != nil {
+			return err
+		}
+		for i := range seats {
+			seats[i].BookingID = b.ID
+		}
+		if len(seats) > 0 {
+			if err := tx.Create(&seats).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *bookingStore) GetByReference(ctx context.Context, ref string) (*Booking, error) {
+	var b Booking
+	err := r.db.WithContext(ctx).Preload("Seats").Where("reference = ?", ref).First(&b).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &b, nil
 }

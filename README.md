@@ -71,49 +71,44 @@ This project implements a production-grade distributed ticketing engine in Go to
 
 ## 📂 Project Structure
 
-The project uses a layered architecture. Each package has a single responsibility, and dependencies flow in one direction: `controllers → service → {locking, repository} → models`.
+The project uses a layered architecture. Each package has a single responsibility, and dependencies flow in one direction: `controllers → service → {locking, models}`.
 
 ```
 distributed-ticket-booking/
-├── cmd/
-│   └── server/
-│       └── main.go            # Entrypoint: load config → select lock strategy → wire layers → serve (graceful shutdown)
+├── main.go                    # Entrypoint: load config → select lock strategy → wire layers → serve (graceful shutdown)
 ├── config/
-│   └── config.go              # Env-driven configuration (DB URL, Redis URL, lock strategy, hold TTL, sweeper cadence)
-├── db/
-│   └── db.go                  # Opens GORM/PostgreSQL connection pool + AutoMigrate + Ping
-├── models/                    # GORM models + status enums (no logic)
-│   ├── event.go               #   Event        + EventStatus  (UPCOMING/ON_SALE/SOLD_OUT/CANCELLED)
-│   ├── seat.go                #   Seat         + SeatStatus   (AVAILABLE/RESERVED/BOOKED/BLOCKED) — has `version` for optimistic lock
-│   ├── reservation.go         #   Reservation  + ReservationStatus (HELD/CONFIRMED/EXPIRED/RELEASED)
-│   └── booking.go             #   Booking, BookingSeat + BookingStatus (PENDING/CONFIRMED/FAILED/REFUNDED)
-├── repository/                # Repository pattern (data access)
-│   ├── repository.go          #   Interfaces (Event/Seat/Reservation/Booking)
-│   └── gorm_repository.go     #   GORM-backed implementations
-├── locking/                   # Concurrency-control engine (the core of the project)
-│   ├── locker.go              #   SeatLocker interface + shared errors (ErrSeatUnavailable, ErrLockLost)
-│   ├── pessimistic.go         #   Strategy 1: GORM tx + SELECT ... FOR UPDATE (clause.Locking)
-│   ├── optimistic.go          #   Strategy 2: version-column compare-and-swap
-│   └── distributed.go         #   Strategy 3: Redis SET NX PX + atomic Lua release script
-├── service/                   # Business logic / orchestration
-│   ├── reservation.go         #   Hold → reserve flow, delegates to configured SeatLocker
-│   └── sweeper.go             #   Background worker: releases expired RESERVED seats back to AVAILABLE
+│   ├── config.go              # Env-driven configuration (DB URL, Redis URL, lock strategy, hold TTL, sweeper cadence)
+│   └── db.go                  # Opens GORM/PostgreSQL connection pool + PingDB
+├── models/                    # GORM models + status enums + their data-access layer
+│   ├── store.go               #   Interfaces (EventStore/SeatStore/ReservationStore/BookingStore)
+│   ├── migration.go           #   AutoMigrate: the single schema-management entrypoint
+│   ├── event.go               #   Event        + EventStatus  (UPCOMING/ON_SALE/SOLD_OUT/CANCELLED) + eventStore
+│   ├── seat.go                #   Seat         + SeatStatus   (AVAILABLE/RESERVED/BOOKED/BLOCKED) — has `version` for optimistic lock — + seatStore
+│   ├── reservation.go         #   Reservation  + ReservationStatus (HELD/CONFIRMED/EXPIRED/RELEASED) + reservationStore
+│   ├── booking.go             #   Booking, BookingSeat + BookingStatus (PENDING/CONFIRMED/FAILED/REFUNDED) + bookingStore
+│   └── user.go                #   User
+├── pkg/
+│   ├── locking/               # Concurrency-control engine (the core of the project) — strategy pattern
+│   │   ├── interface.go       #   The whole public API: SeatLocker + Strategy + errors + New() factory
+│   │   ├── pessimistic.go     #   Strategy 1: GORM tx + SELECT ... FOR UPDATE (clause.Locking)
+│   │   ├── optimistic.go      #   Strategy 2: version-column compare-and-swap
+│   │   └── distributed.go     #   Strategy 3: Redis SET NX PX + atomic Lua release script
+│   └── service/               # Business logic / orchestration
+│       ├── reservation.go     #   Hold → reserve flow, delegates to configured SeatLocker
+│       └── sweeper.go         #   Background worker: releases expired RESERVED seats back to AVAILABLE
 ├── controllers/               # HTTP layer / Gin handlers (no business logic)
 │   ├── response.go            #   JSON error-envelope helper
 │   ├── health_controller.go   #   GET /healthz
 │   └── reservation_controller.go # POST /api/v1/reservations
 ├── router/
 │   └── router.go              # Gin engine: route groups + Logger/Recovery middleware
-├── migrations/
-│   ├── 0001_init.up.sql       # PostgreSQL schema (reference / production migrations)
-│   └── 0001_init.down.sql     # Rollback
 ├── .env.example               # Sample configuration
-├── Makefile                   # run / build / test / migrate-up / migrate-down targets
+├── Makefile                   # run / build / test / tidy / fmt / vet targets
 ├── go.mod
 └── README.md
 ```
 
-> **Migrations:** GORM `AutoMigrate` runs on startup for local convenience. The SQL files under `migrations/` remain the source of truth for production (`golang-migrate`).
+> **Migrations:** schema management is GORM `AutoMigrate` only — [`models.AutoMigrate`](models/migration.go) runs on startup and brings every table in line with the structs in `models/`. There are no versioned SQL files, so a schema change is a change to a struct. Note that `AutoMigrate` only adds: it creates missing tables, columns and indexes but never drops or narrows an existing column, and offers no rollback.
 
 ---
 
@@ -136,15 +131,29 @@ locking.SeatLocker.Acquire(seatID, userID)     ◄── strategy chosen at star
         │      ├── optimistic  → UPDATE seats SET status='RESERVED', version=version+1 WHERE id=? AND version=?
         │      └── distributed → Redis SET seatlock:<id> <token> NX PX <ttl>, then flip seat in DB (release via Lua CAS-delete)
         ▼
-repository (GORM) ──► PostgreSQL
+models store (GORM) ──► PostgreSQL
         │  seat is RESERVED; persist reservation row (expires_at = now + HOLD_TTL)
         ▼
 controllers ──► 201 Created { status: "HELD", reservation, strategy }
 ```
 
-**Background flow (Expiry Sweeper — Phase 5):** `service.Sweeper` ticks every `SWEEP_EVERY`, calling `SeatRepository.ReleaseExpired` + `ReservationRepository.MarkExpired` to return unpaid `RESERVED` seats to `AVAILABLE`.
+**Background flow (Expiry Sweeper — Phase 5):** `service.Sweeper` ticks every `SWEEP_EVERY`, calling `models.SeatStore.ReleaseExpired` + `models.ReservationStore.MarkExpired` to return unpaid `RESERVED` seats to `AVAILABLE`.
 
-The active locking strategy is selected once at startup in [`main.go`](cmd/server/main.go) from the `LOCK_STRATEGY` env var (`pessimistic` | `optimistic` | `distributed`), so the same codebase can be benchmarked under each strategy without changes.
+The active locking strategy is selected once at startup in [`main.go`](main.go) from the `LOCK_STRATEGY` env var (`pessimistic` | `optimistic` | `distributed`), so the same codebase can be benchmarked under each strategy without changes.
+
+**Strategy pattern:** the three implementations are unexported, so no caller can reach one directly. `pkg/locking` exports only the `SeatLocker` interface, the `Strategy` names, the shared errors, and a single `New(locking.Config)` factory that maps a `Strategy` to its implementation:
+
+```go
+locker, err := locking.New(locking.Config{
+    Strategy: cfg.LockStrategy, // "pessimistic" | "optimistic" | "distributed"
+    DB:       gormDB,
+    RedisURL: cfg.RedisURL,     // only read by the distributed strategy
+    HoldTTL:  cfg.HoldTTL,
+})
+defer locker.Close()            // no-op for the DB strategies; closes Redis for the distributed one
+```
+
+Everything downstream (`service`, `controllers`) is typed against `locking.SeatLocker`, so adding a fourth strategy means adding one file and one `case` in `New` — no caller changes.
 
 ---
 
@@ -162,7 +171,7 @@ The active locking strategy is selected once at startup in [`main.go`](cmd/serve
 
 - **Language**: Go 1.23+
 - **HTTP Routing**: [Gin](https://github.com/gin-gonic/gin) (`gin.Logger` + `gin.Recovery` middleware, route groups, JSON binding)
-- **Database & ORM**: **PostgreSQL** via [GORM](https://gorm.io) (`gorm.io/driver/postgres`); `AutoMigrate` for dev, raw SQL migrations via `golang-migrate` for production
+- **Database & ORM**: **PostgreSQL** via [GORM](https://gorm.io) (`gorm.io/driver/postgres`); schema managed entirely by `AutoMigrate` over the structs in `models/`
 - **Distributed Cache & Locking**: Redis (using `go-redis/v9` and atomic Lua scripts)
 - **Concurrency & Load Testing**: Go Goroutines, `golang.org/x/sync/errgroup`, custom CLI benchmark runner
 
@@ -179,8 +188,6 @@ cp .env.example .env          # then edit DATABASE_URL / REDIS_URL / LOCK_STRATE
 # 2. Create the database (GORM AutoMigrate creates the tables on startup)
 createdb ticketing
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/ticketing?sslmode=disable"
-#    Optional: apply the versioned SQL migrations instead (requires golang-migrate)
-#    make migrate-up
 
 # 3. Run the server
 make run                      # serves on :8080 by default
@@ -200,7 +207,7 @@ Switch the concurrency strategy without touching code by setting `LOCK_STRATEGY`
 ## 🗺️ Project Roadmap
 
 - [x] **Phase 1: Project Initialization & Architectural Specifications** (README & Design)
-- [x] **Phase 2: Database Schema & Migration Setup** (GORM models + AutoMigrate + SQL migrations)
+- [x] **Phase 2: Database Schema & Migration Setup** (GORM models + AutoMigrate)
 - [x] **Phase 3: Core Domain Models & Repository Pattern in Go** (GORM-backed repositories)
 - [x] **Phase 4: Concurrency Engine Implementation**
   - [x] DB Pessimistic Locking Strategy (`SELECT ... FOR UPDATE`)

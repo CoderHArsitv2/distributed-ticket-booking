@@ -10,26 +10,29 @@ import (
 	"distributed-ticket-booking/models"
 )
 
-// OptimisticLocker uses a version column and a compare-and-swap UPDATE:
+// optimisticLocker uses a version column and a compare-and-swap UPDATE:
 //
 //	UPDATE seats SET status='RESERVED', version=version+1
 //	WHERE id=? AND version=? AND status='AVAILABLE'
 //
 // If zero rows are affected, another writer won the race. Non-blocking; best for
 // low write contention and high-read workloads.
-type OptimisticLocker struct {
+type optimisticLocker struct {
 	db  *gorm.DB
 	ttl time.Duration
 }
 
-// NewOptimisticLocker constructs the optimistic (version-CAS) strategy.
-func NewOptimisticLocker(db *gorm.DB, ttl time.Duration) *OptimisticLocker {
-	return &OptimisticLocker{db: db, ttl: ttl}
+// newOptimisticLocker constructs the optimistic (version-CAS) strategy.
+func newOptimisticLocker(db *gorm.DB, ttl time.Duration) *optimisticLocker {
+	return &optimisticLocker{db: db, ttl: ttl}
 }
 
-func (l *OptimisticLocker) Name() string { return "optimistic" }
+func (l *optimisticLocker) Name() string { return string(StrategyOptimistic) }
 
-func (l *OptimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
+// Close satisfies SeatLocker; the shared *gorm.DB is owned by the caller.
+func (l *optimisticLocker) Close() error { return nil }
+
+func (l *optimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
 	// Read the current version, then attempt a version-guarded CAS update.
 	var seat models.Seat
 	if err := l.db.WithContext(ctx).First(&seat, seatID).Error; err != nil {
@@ -60,7 +63,7 @@ func (l *OptimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (s
 	return "", nil
 }
 
-func (l *OptimisticLocker) Release(ctx context.Context, seatID int64, token string) error {
+func (l *optimisticLocker) Release(ctx context.Context, seatID int64, token string) error {
 	return l.db.WithContext(ctx).Model(&models.Seat{}).
 		Where("id = ? AND status = ?", seatID, models.SeatReserved).
 		Updates(map[string]any{

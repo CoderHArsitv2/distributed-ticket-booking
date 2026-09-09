@@ -5,16 +5,20 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"distributed-ticket-booking/pkg/locking"
 )
 
 // LockStrategy selects which concurrency-control engine the reservation
-// service uses. See the README for the trade-offs of each.
-type LockStrategy string
+// service uses. It aliases locking.Strategy so the locking package stays the
+// single source of truth for the strategy names. See the README for the
+// trade-offs of each.
+type LockStrategy = locking.Strategy
 
 const (
-	LockPessimistic LockStrategy = "pessimistic" // SELECT ... FOR UPDATE
-	LockOptimistic  LockStrategy = "optimistic"  // version column CAS
-	LockDistributed LockStrategy = "distributed" // Redis SET NX PX + Lua release
+	LockPessimistic = locking.StrategyPessimistic // SELECT ... FOR UPDATE
+	LockOptimistic  = locking.StrategyOptimistic  // version column CAS
+	LockDistributed = locking.StrategyDistributed // Redis SET NX PX + Lua release
 )
 
 // Config holds all runtime configuration, populated from the environment.
