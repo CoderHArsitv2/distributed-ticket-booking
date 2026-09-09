@@ -11,22 +11,25 @@ import (
 	"distributed-ticket-booking/models"
 )
 
-// PessimisticLocker uses SELECT ... FOR UPDATE inside a GORM transaction to lock
+// pessimisticLocker uses SELECT ... FOR UPDATE inside a GORM transaction to lock
 // the target seat row until commit/rollback. Highest consistency, lowest
 // throughput. Best for low-to-medium contention.
-type PessimisticLocker struct {
+type pessimisticLocker struct {
 	db  *gorm.DB
 	ttl time.Duration
 }
 
-// NewPessimisticLocker constructs the pessimistic (row-lock) strategy.
-func NewPessimisticLocker(db *gorm.DB, ttl time.Duration) *PessimisticLocker {
-	return &PessimisticLocker{db: db, ttl: ttl}
+// newPessimisticLocker constructs the pessimistic (row-lock) strategy.
+func newPessimisticLocker(db *gorm.DB, ttl time.Duration) *pessimisticLocker {
+	return &pessimisticLocker{db: db, ttl: ttl}
 }
 
-func (l *PessimisticLocker) Name() string { return "pessimistic" }
+func (l *pessimisticLocker) Name() string { return string(StrategyPessimistic) }
 
-func (l *PessimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
+// Close satisfies SeatLocker; the shared *gorm.DB is owned by the caller.
+func (l *pessimisticLocker) Close() error { return nil }
+
+func (l *pessimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (string, error) {
 	err := l.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var seat models.Seat
 		// Row-level lock held until this transaction commits/rolls back.
@@ -54,7 +57,7 @@ func (l *PessimisticLocker) Acquire(ctx context.Context, seatID, userID int64) (
 	return "", nil
 }
 
-func (l *PessimisticLocker) Release(ctx context.Context, seatID int64, token string) error {
+func (l *pessimisticLocker) Release(ctx context.Context, seatID int64, token string) error {
 	return l.db.WithContext(ctx).Model(&models.Seat{}).
 		Where("id = ? AND status = ?", seatID, models.SeatReserved).
 		Updates(map[string]any{

@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // SeatStatus is the inventory state of a single seat.
 type SeatStatus string
@@ -24,4 +30,55 @@ type Seat struct {
 	Version       int64      `gorm:"not null;default:0" json:"version"` // optimistic locking
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// seatStore is the GORM-backed SeatStore.
+type seatStore struct{ db *gorm.DB }
+
+// NewSeatStore returns a GORM-backed SeatStore.
+func NewSeatStore(db *gorm.DB) SeatStore { return &seatStore{db: db} }
+
+func (r *seatStore) GetByID(ctx context.Context, id int64) (*Seat, error) {
+	var s Seat
+	if err := r.db.WithContext(ctx).First(&s, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (r *seatStore) ListByEvent(ctx context.Context, eventID int64) ([]Seat, error) {
+	var seats []Seat
+	err := r.db.WithContext(ctx).
+		Where("event_id = ?", eventID).
+		Order("section asc, seat_number asc").
+		Find(&seats).Error
+	return seats, err
+}
+
+func (r *seatStore) ReserveOptimistic(ctx context.Context, seatID, expectedVersion int64) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&Seat{}).
+		Where("id = ? AND version = ? AND status = ?", seatID, expectedVersion, SeatAvailable).
+		Updates(map[string]any{
+			"status":  SeatReserved,
+			"version": gorm.Expr("version + 1"),
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+func (r *seatStore) ReleaseExpired(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).Model(&Seat{}).
+		Where("status = ? AND reserved_until IS NOT NULL AND reserved_until < ?",
+			SeatReserved, time.Now()).
+		Updates(map[string]any{
+			"status":         SeatAvailable,
+			"reserved_until": nil,
+			"version":        gorm.Expr("version + 1"),
+		})
+	return res.RowsAffected, res.Error
 }

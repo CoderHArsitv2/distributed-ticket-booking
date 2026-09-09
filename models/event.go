@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // EventStatus is the lifecycle state of an event.
 type EventStatus string
@@ -24,4 +30,31 @@ type Event struct {
 	Seats          []Seat      `gorm:"foreignKey:EventID" json:"seats,omitempty"`
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
+// eventStore is the GORM-backed EventStore.
+type eventStore struct{ db *gorm.DB }
+
+// NewEventStore returns a GORM-backed EventStore.
+func NewEventStore(db *gorm.DB) EventStore { return &eventStore{db: db} }
+
+func (r *eventStore) GetByID(ctx context.Context, id int64) (*Event, error) {
+	var e Event
+	if err := r.db.WithContext(ctx).First(&e, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &e, nil
+}
+
+func (r *eventStore) List(ctx context.Context) ([]Event, error) {
+	var events []Event
+	err := r.db.WithContext(ctx).Order("sale_starts_at asc").Find(&events).Error
+	return events, err
+}
+
+func (r *eventStore) Create(ctx context.Context, e *Event) error {
+	return r.db.WithContext(ctx).Create(e).Error
 }

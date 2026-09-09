@@ -1,13 +1,13 @@
-.PHONY: run build test tidy fmt vet migrate-up migrate-down
+.PHONY: run build test tidy fmt vet
 
 # Binary output
 BIN := bin/server
 
 run:
-	go run ./cmd/server
+	go run .
 
 build:
-	go build -o $(BIN) ./cmd/server
+	go build -o $(BIN) .
 
 test:
 	go test ./...
@@ -20,11 +20,3 @@ fmt:
 
 vet:
 	go vet ./...
-
-# Requires golang-migrate (https://github.com/golang-migrate/migrate)
-# and DATABASE_URL exported in your environment.
-migrate-up:
-	migrate -path migrations -database "$$DATABASE_URL" up
-
-migrate-down:
-	migrate -path migrations -database "$$DATABASE_URL" down 1

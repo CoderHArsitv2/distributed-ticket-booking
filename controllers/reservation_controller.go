@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"distributed-ticket-booking/locking"
-	"distributed-ticket-booking/service"
+	"distributed-ticket-booking/pkg/locking"
+	"distributed-ticket-booking/pkg/service"
 )
 
 // ReservationController handles seat-hold and booking endpoints.

@@ -5,23 +5,23 @@ import (
 	"log/slog"
 	"time"
 
-	"distributed-ticket-booking/repository"
+	"distributed-ticket-booking/models"
 )
 
 // Sweeper is the background worker that releases expired RESERVED seats back to
 // AVAILABLE when payment was not completed within the hold window (README
 // Phase 5).
 type Sweeper struct {
-	seats    repository.SeatRepository
-	holds    repository.ReservationRepository
+	seats    models.SeatStore
+	holds    models.ReservationStore
 	interval time.Duration
 	log      *slog.Logger
 }
 
 // NewSweeper constructs the expiry sweeper.
 func NewSweeper(
-	seats repository.SeatRepository,
-	holds repository.ReservationRepository,
+	seats models.SeatStore,
+	holds models.ReservationStore,
 	interval time.Duration,
 	log *slog.Logger,
 ) *Sweeper {
@@ -46,7 +46,7 @@ func (s *Sweeper) Run(ctx context.Context) {
 }
 
 func (s *Sweeper) sweep(ctx context.Context) {
-	// TODO(phase-5): wire real repositories; both calls run inside one tx.
+	// TODO(phase-5): both calls should run inside one tx.
 	if s.seats == nil || s.holds == nil {
 		return
 	}
